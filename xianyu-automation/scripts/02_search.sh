@@ -113,15 +113,16 @@ echo "=== 总计: $total 个商品 ==="
 
 # 步骤6: 合并所有详情并存入数据库
 echo "保存到数据库..."
-DB_PATH="/Users/lucifer/.openclaw/workspace-xiaoyu/project-xianyu/xianyu-automation/data/xianyu_products.db"
-rm -f "$DB_PATH"
+# 数据库路径（相对路径，基于脚本目录）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DB_PATH="$SCRIPT_DIR/../data/xianyu_products.db"
 
 python3 << 'PYEOF'
 import sqlite3
 import os
 import json
 
-DB_PATH = "/Users/lucifer/.openclaw/workspace-xiaoyu/project-xianyu/xianyu-automation/data/xianyu_products.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "xianyu_products.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH)
