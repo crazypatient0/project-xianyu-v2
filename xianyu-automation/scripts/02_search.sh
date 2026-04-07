@@ -35,7 +35,7 @@ for ((page=1; page<=PAGES; page++)); do
     link_count=$(wc -l < /tmp/xianyu_search/links_${page}.txt)
     echo "第${page}页: ${link_count} 个商品链接"
 
-    # 提取当前页商品详情
+    # 提取当前页商品详情（改进版）
     echo "提取商品详情..."
     osascript << 'EOF' > /tmp/xianyu_search/products_${page}.json
 tell application "Safari"
@@ -61,10 +61,29 @@ for(var i=0; i<cards.length && i<30; i++){
     var wants = '';
     for(var j=0; j<texts.length; j++) {
         if(texts[j].match(/人想要/)) {
-            wants = texts[j].match(/(\\d+)/) ? texts[j].match(/(\\d+)/)[1] : '';
+            var m = texts[j].match(/(\\d+)人想要/);
+            wants = m ? m[1] : '';
         }
-        if(texts[j].match(/^.{2,4}$/) && !texts[j].match(/想要/) && !texts[j].match(/信用/) && !texts[j].match(/好评/) && !texts[j].match(/全新/) && !texts[j].match(/\\d+/)) {
-            loc = texts[j];
+    }
+    for(var j=0; j<texts.length; j++) {
+        var t = texts[j];
+        if(t.match(/^.{2,4}$/) && 
+           !t.match(/想要/) && 
+           !t.match(/信用/) && 
+           !t.match(/好评/) && 
+           !t.match(/全新/) && 
+           !t.match(/\\d+/) &&
+           !t.match(/回复/) &&
+           !t.match(/天内/) &&
+           !t.match(/降价/) &&
+           !t.match(/批发/) &&
+           !t.match(/零售/) &&
+           !t.match(/包邮/) &&
+           !t.match(/自提/) &&
+           !t.match(/全新/) &&
+           !t.match(/几乎/)) {
+            loc = t;
+            break;
         }
     }
     items.push({title: title, price: price, loc: loc, wants: wants, url: card.href});
@@ -75,7 +94,6 @@ JSON.stringify(items);
     end tell
 end tell
 EOF
-    # 用python计数而不是wc -l
     product_count=$(python3 -c "import json,sys; f=open('/tmp/xianyu_search/products_${page}.json'); d=json.load(f); print(len(d))" 2>/dev/null || echo 0)
     echo "第${page}页: ${product_count} 条详情"
 
@@ -182,7 +200,7 @@ with_loc = c.fetchone()[0]
 c.execute("SELECT COUNT(*) FROM products WHERE wants != ''")
 with_wants = c.fetchone()[0]
 
-print(f"总计: {total} 个商品")
+print(f"数据库: {total} 个商品")
 print(f"  - 有价格: {with_price}")
 print(f"  - 有位置: {with_loc}")
 print(f"  - 有想要数: {with_wants}")
