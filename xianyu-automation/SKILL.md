@@ -36,6 +36,6 @@ osascript -e 'tell application "Safari" to activate'
 
 ## URL
 - 首页：https://www.goofish.com
-- 搜索：https://www.goofish.com/2fn?keyword=关键词
+- 搜索：https://www.goofish.com/search?q=关键词
 - 商品：https://www.goofish.com/item?id=ID
 - 发布：https://www.goofish.com/publish

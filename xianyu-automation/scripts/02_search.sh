@@ -1,8 +1,6 @@
 #!/bin/bash
 # 商品搜索 - 使用Safari MCP工具
 
-# 参数: $1 = 关键词
-
 KEYWORD="${1:-}"
 
 if [ -z "$KEYWORD" ]; then
@@ -12,8 +10,11 @@ fi
 
 echo "=== 商品搜索: $KEYWORD ==="
 
-# 步骤1: 打开搜索页
-echo "1. safari__safari_new_tab → https://www.goofish.com/2fn?keyword=$KEYWORD"
+# 步骤1: 打开Safari
+osascript -e 'tell application "Safari" to activate'
 
-# 步骤2: 获取商品列表
-echo "2. safari__safari_snapshot → 获取商品列表"
+# 步骤2: 打开搜索页
+mcporter call safari.safari_new_tab --args '{"url":"https://www.goofish.com/search?q='$KEYWORD'"}'
+
+# 步骤3: 获取商品列表
+mcporter call safari.safari_snapshot
