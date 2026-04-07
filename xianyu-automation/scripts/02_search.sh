@@ -128,9 +128,9 @@ conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 c.execute('''CREATE TABLE products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT UNIQUE,
+    url TEXT,
     title TEXT,
-    price TEXT,
+    price DECIMAL(10,2),
     location TEXT,
     seller TEXT,
     description TEXT,
@@ -184,8 +184,8 @@ for url in sorted(all_urls):
 # 保存到数据库
 saved = 0
 for p in final_products:
-    c.execute('INSERT OR IGNORE INTO products (url, title, price, location, wants) VALUES (?, ?, ?, ?, ?)',
-             (p["url"], p["title"], p["price"], p["location"], p["wants"]))
+    c.execute('INSERT INTO products (url, title, price, location, wants) VALUES (?, ?, ?, ?, ?)',
+             (p["url"], p["title"], float(p["price"]) if p["price"] else None, p["location"], p["wants"]))
     saved += 1
 
 conn.commit()
