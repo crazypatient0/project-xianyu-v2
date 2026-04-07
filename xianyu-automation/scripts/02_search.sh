@@ -19,21 +19,65 @@ osascript -e 'tell application "Safari" to tell window 1 to tell current tab to 
 # 步骤3: 等待页面加载
 sleep 3
 
-# 步骤4: 获取每一页的商品链接
+# 步骤4: 获取每一页的商品链接和详情
+rm -rf /tmp/xianyu_search
 mkdir -p /tmp/xianyu_search
-rm -f /tmp/xianyu_search/page_*.txt /tmp/xianyu_search/links_*.txt
 
 for ((page=1; page<=PAGES; page++)); do
     echo "=== 第 $page 页 ==="
 
-    # 获取快照
+    # 获取快照（用于链接）
     echo "获取页面快照..."
     mcporter call safari.safari_snapshot --args '{"tabIndex":1}' > /tmp/xianyu_search/page_${page}.txt 2>&1
 
     # 提取商品链接
     grep -o 'href="https://www\.goofish\.com/item?id=[^"]*"' /tmp/xianyu_search/page_${page}.txt | sed 's/href="//;s/"//' | sort -u > /tmp/xianyu_search/links_${page}.txt
-    count=$(wc -l < /tmp/xianyu_search/links_${page}.txt)
-    echo "第${page}页: ${count} 个商品"
+    link_count=$(wc -l < /tmp/xianyu_search/links_${page}.txt)
+    echo "第${page}页: ${link_count} 个商品链接"
+
+    # 提取当前页商品详情
+    echo "提取商品详情..."
+    osascript << 'EOF' > /tmp/xianyu_search/products_${page}.json
+tell application "Safari"
+    tell window 1
+        tell current tab
+            do JavaScript "
+var items = [];
+var cards = document.querySelectorAll('a[href*=\"/item?id=\"]');
+for(var i=0; i<cards.length && i<30; i++){
+    var card = cards[i];
+    var priceNum = card.querySelector('.number--NKh1vXWM');
+    var priceDec = card.querySelector('.decimal--lSAcITCN');
+    var price = priceNum ? (priceNum.innerText + (priceDec ? priceDec.innerText : '')) : '';
+    var titleEl = card.querySelector('.main-title--sMrtWSJa');
+    var title = titleEl ? titleEl.innerText.replace(/\\n/g,' ').substring(0,200) : '';
+    var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null, false);
+    var texts = [];
+    while(walker.nextNode()) {
+        var t = walker.currentNode.nodeValue.trim();
+        if(t && t.length > 0 && t.length < 30) texts.push(t);
+    }
+    var loc = '';
+    var wants = '';
+    for(var j=0; j<texts.length; j++) {
+        if(texts[j].match(/人想要/)) {
+            wants = texts[j].match(/(\\d+)/) ? texts[j].match(/(\\d+)/)[1] : '';
+        }
+        if(texts[j].match(/^.{2,4}$/) && !texts[j].match(/想要/) && !texts[j].match(/信用/) && !texts[j].match(/好评/) && !texts[j].match(/全新/) && !texts[j].match(/\\d+/)) {
+            loc = texts[j];
+        }
+    }
+    items.push({title: title, price: price, loc: loc, wants: wants, url: card.href});
+}
+JSON.stringify(items);
+"
+        end tell
+    end tell
+end tell
+EOF
+    # 用python计数而不是wc -l
+    product_count=$(python3 -c "import json,sys; f=open('/tmp/xianyu_search/products_${page}.json'); d=json.load(f); print(len(d))" 2>/dev/null || echo 0)
+    echo "第${page}页: ${product_count} 条详情"
 
     # 点击下一页（如果不是最后一页）
     if [ $page -lt $PAGES ]; then
@@ -49,7 +93,7 @@ total=$(wc -l < /tmp/xianyu_search/all_links.txt)
 echo ""
 echo "=== 总计: $total 个商品 ==="
 
-# 步骤6: 保存到数据库
+# 步骤6: 合并所有详情并存入数据库
 echo "保存到数据库..."
 DB_PATH="/Users/lucifer/.openclaw/workspace-xiaoyu/project-xianyu/xianyu-automation/data/xianyu_products.db"
 rm -f "$DB_PATH"
@@ -57,7 +101,7 @@ rm -f "$DB_PATH"
 python3 << 'PYEOF'
 import sqlite3
 import os
-import re
+import json
 
 DB_PATH = "/Users/lucifer/.openclaw/workspace-xiaoyu/project-xianyu/xianyu-automation/data/xianyu_products.db"
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -77,43 +121,83 @@ c.execute('''CREATE TABLE products (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
 ''')
 
+# 收集所有URL
+all_urls = set()
 with open("/tmp/xianyu_search/all_links.txt") as f:
-    all_links = [line.strip() for line in f if line.strip()]
+    for line in f:
+        url = line.strip()
+        if url:
+            all_urls.add(url)
 
-snapshots = {
-    1: "/tmp/xianyu_search/page_1.txt",
-    2: "/tmp/xianyu_search/page_2.txt", 
-    3: "/tmp/xianyu_search/page_3.txt"
-}
+# 收集所有页面的商品数据
+url_to_data = {}
+for page in range(1, 10):
+    fname = f"/tmp/xianyu_search/products_{page}.json"
+    if not os.path.exists(fname):
+        break
+    with open(fname) as f:
+        content = f.read().strip()
+        if content:
+            try:
+                products = json.loads(content)
+                for p in products:
+                    if p.get("url"):
+                        url_to_data[p["url"]] = p
+            except:
+                pass
 
-products = {}
-for url in all_links:
-    products[url] = {"url": url, "title": "", "price": ""}
+print(f"已提取 {len(url_to_data)} 个商品详情")
 
-for page_num, snap_path in snapshots.items():
-    if not os.path.exists(snap_path):
-        continue
-    with open(snap_path) as f:
-        snapshot = f.read()
-    pattern = re.compile(r'ref=\d+_\d+ link "([^"]+)" focusable href="(https://www\.goofish\.com/item\?id=[^"]+)"')
-    for match in pattern.finditer(snapshot):
-        title = match.group(1)
-        url = match.group(2)
-        if url in products:
-            products[url]["title"] = title[:300]
-            pm = re.search(r'¥(\d+(?:\.\d+)?)', title)
-            if pm:
-                products[url]["price"] = pm.group(1)
+# 构建最终商品列表
+final_products = []
+for url in sorted(all_urls):
+    if url in url_to_data:
+        p = url_to_data[url]
+        final_products.append({
+            "url": url,
+            "title": p.get("title", ""),
+            "price": p.get("price", ""),
+            "location": p.get("loc", ""),
+            "wants": p.get("wants", "")
+        })
+    else:
+        final_products.append({"url": url, "title": "", "price": "", "location": "", "wants": ""})
 
+# 保存到数据库
 saved = 0
-for p in products.values():
-    if p["title"] or p["price"]:
-        c.execute('INSERT OR IGNORE INTO products (url, title, price) VALUES (?, ?, ?)',
-                 (p["url"], p["title"], p["price"]))
-        saved += 1
+for p in final_products:
+    c.execute('INSERT OR IGNORE INTO products (url, title, price, location, wants) VALUES (?, ?, ?, ?, ?)',
+             (p["url"], p["title"], p["price"], p["location"], p["wants"]))
+    saved += 1
 
 conn.commit()
-print(f"已保存 {saved} 个商品到数据库")
+
+# 统计
+c.execute("SELECT COUNT(*) FROM products")
+total = c.fetchone()[0]
+c.execute("SELECT COUNT(*) FROM products WHERE price != ''")
+with_price = c.fetchone()[0]
+c.execute("SELECT COUNT(*) FROM products WHERE location != ''")
+with_loc = c.fetchone()[0]
+c.execute("SELECT COUNT(*) FROM products WHERE wants != ''")
+with_wants = c.fetchone()[0]
+
+print(f"总计: {total} 个商品")
+print(f"  - 有价格: {with_price}")
+print(f"  - 有位置: {with_loc}")
+print(f"  - 有想要数: {with_wants}")
+
+# 示例
+if total > 0:
+    print("\n=== 商品示例 ===")
+    c.execute("SELECT price, location, wants, title FROM products LIMIT 5")
+    for row in c.fetchall():
+        price = row[0] if row[0] else "?"
+        loc = row[1] if row[1] else "?"
+        wants = row[2] if row[2] else "0"
+        title = (row[3] or "无标题")[:50]
+        print(f"  ¥{price} | {loc} | {wants}人想要 | {title}...")
+
 conn.close()
 PYEOF
 
