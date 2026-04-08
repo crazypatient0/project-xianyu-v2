@@ -22,11 +22,9 @@ if [ "$window_count" -eq 0 ]; then
 fi
 echo "Safari ✅"
 
-# ========== 步骤2: 检查Safari MCP可用性 ==========
-echo "检查Safari MCP..."
-mcporter list > /dev/null 2>&1 || { echo "错误: mcporter不可用"; exit 1; }
-mcporter list 2>/dev/null | grep -q "safari" || { echo "错误: Safari MCP server未运行"; exit 1; }
-echo "Safari MCP ✅"
+# ========== 步骤2: Safari MCP检查（跳过） ==========
+echo "检查Safari MCP... ⏭️ (跳过，直接用AppleScript)"
+echo "Safari MCP ⏭️"
 
 # ========== 步骤3: 检查数据库和表 ==========
 echo "检查数据库和表..."
