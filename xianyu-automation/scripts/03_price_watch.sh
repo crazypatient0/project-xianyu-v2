@@ -57,7 +57,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# ========== 步骤4: 获取去重后的商品URL ==========
+# ========== 步骤4: 获取去重后的商品URL（全部） ==========
 echo "读取去重后的商品URL..."
 URL_COUNT=$(python3 - "$DB_PATH" << 'PYEOF'
 import sqlite3, sys
@@ -67,7 +67,7 @@ try:
     c = conn.cursor()
     c.execute("SELECT COUNT(DISTINCT url) FROM products WHERE url != ''")
     count = c.fetchone()[0]
-    c.execute("SELECT DISTINCT url FROM products WHERE url != '' LIMIT 50")
+    c.execute("SELECT DISTINCT url FROM products WHERE url != ''")
     urls = [row[0] for row in c.fetchall()]
     conn.close()
     with open("/tmp/price_watch_urls.txt", "w") as f:
@@ -86,7 +86,7 @@ if [ $? -ne 0 ] || [ -z "$URL_COUNT" ]; then
 fi
 echo "共 $URL_COUNT 个去重商品"
 
-# ========== 步骤5: 逐个访问商品 ==========
+# ========== 步骤5: 逐个访问商品（拟人化操作） ==========
 mkdir -p /tmp/price_watch
 processed=0
 failed=0
@@ -97,10 +97,27 @@ while IFS= read -r url; do
     processed=$((processed + 1))
     echo -ne "\r[$processed/$URL_COUNT] "
 
-    osascript -e 'tell application "Safari" to close current tab of window 1' 2>/dev/null
-    osascript -e 'tell application "Safari" to open location "'"$url"'"' 2>/dev/null
+    # 打开新标签页访问URL
+    osascript -e 'tell application "Safari" to tell window 1 to set current tab to (make new tab with properties {URL:"'"$url"'})' 2>/dev/null
     sleep 3
 
+    # 拟人化操作: 随机滚动50-300像素
+    scroll_px=$((RANDOM % 251 + 50))
+    osascript << 'SCROLLEOF'
+tell application "Safari"
+    tell window 1
+        tell current tab
+            do JavaScript "window.scrollBy(0, " & L & ")"
+        end tell
+    end tell
+end tell
+SCROLLEOF
+    # 随机停留5-30秒
+    stay_time=$((RANDOM % 26 + 5))
+    echo " 滚动${scroll_px}px, 停留${stay_time}秒..."
+    sleep $stay_time
+
+    # 提取数据
     tmpfile="/tmp/price_watch/p_$$.json"
     osascript << 'OUTEREOF' > "$tmpfile"
 tell application "Safari"
@@ -153,7 +170,7 @@ PYEOF
         echo -ne "\r[$processed/$URL_COUNT] ❌ 无输出\n"
     fi
     rm -f "$tmpfile"
-    sleep 2
+
 done < /tmp/price_watch_urls.txt
 
 echo ""
