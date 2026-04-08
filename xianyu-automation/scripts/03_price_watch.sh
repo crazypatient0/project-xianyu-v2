@@ -101,15 +101,7 @@ while IFS= read -r url; do
 
     # 拟人化操作: 随机滚动50-300像素
     scroll_px=$((RANDOM % 251 + 50))
-    osascript << 'SCROLLEOF'
-tell application "Safari"
-    tell window 1
-        tell current tab
-            do JavaScript "window.scrollBy(0, " & L & ")"
-        end tell
-    end tell
-end tell
-SCROLLEOF
+    osascript -e "tell application \"Safari\" to tell window 1 to tell current tab to do JavaScript \"window.scrollBy(0, $scroll_px)\""
     # 随机停留5-30秒
     stay_time=$((RANDOM % 26 + 5))
     echo " 滚动${scroll_px}px, 停留${stay_time}秒..."
