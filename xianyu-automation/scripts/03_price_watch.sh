@@ -84,7 +84,7 @@ if [ $? -ne 0 ] || [ -z "$URL_COUNT" ]; then
 fi
 echo "共 $URL_COUNT 个去重商品"
 
-# ========== 步骤5: 逐个访问商品（拟人化操作） ==========
+# ========== 步骤5: 逐个访问商品（新标签页方式） ==========
 mkdir -p /tmp/price_watch
 processed=0
 failed=0
@@ -96,9 +96,12 @@ while IFS= read -r url; do
     echo -ne "\r[$processed/$URL_COUNT] "
 
     # 打开新标签页访问URL
-    osascript -e 'tell application "Safari" to tell window 1 to set current tab to (make new tab with properties {URL:"'"$url"'})' 2>/dev/null
+    osascript -e "tell application \"Safari\" to tell window 1 to make new tab with properties {URL:\"$url\"}"
     sleep 3
 
+    # 验证页面是否正确加载（检查当前URL）
+    current_url=$(osascript -e 'tell application "Safari" to tell window 1 to return URL of current tab')
+    
     # 拟人化操作: 随机滚动50-300像素
     scroll_px=$((RANDOM % 251 + 50))
     osascript -e "tell application \"Safari\" to tell window 1 to tell current tab to do JavaScript \"window.scrollBy(0, $scroll_px)\""
@@ -151,13 +154,19 @@ PYEOF
         if [ $? -eq 0 ]; then
             saved=$((saved + 1))
             echo -ne "\r[$processed/$URL_COUNT] ✅ $result\n"
+            # 成功获取数据后关闭当前标签页
+            osascript -e 'tell application "Safari" to close current tab of window 1'
         else
             failed=$((failed + 1))
             echo -ne "\r[$processed/$URL_COUNT] ❌ 解析失败\n"
+            # 解析失败也关闭标签页
+            osascript -e 'tell application "Safari" to close current tab of window 1'
         fi
     else
         failed=$((failed + 1))
         echo -ne "\r[$processed/$URL_COUNT] ❌ 无输出\n"
+        # 无输出也关闭标签页
+        osascript -e 'tell application "Safari" to close current tab of window 1'
     fi
     rm -f "$tmpfile"
 
