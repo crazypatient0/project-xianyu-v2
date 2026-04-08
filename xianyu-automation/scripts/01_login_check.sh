@@ -18,7 +18,7 @@ end tell'
 echo "   → https://www.goofish.com"
 sleep 3
 
-# 步骤3: 执行JavaScript检测
+# 步骤3: 执行JavaScript检测（增强版：同时检测多个登录标志）
 echo "3. 执行登录状态检测..."
 
 RESULT=$(osascript << 'JSEOF'
@@ -27,9 +27,11 @@ tell application "Safari"
 (function(){
   var iframe=document.querySelector('iframe[src*=\"passport.goofish.com\"]');
   var hasLoginIframe=!!iframe&&iframe.src.indexOf('mini_login.htm')!==-1;
-  var userEl=document.querySelector('.user-nick,.nick-name,[class*=user-nick]');
+  var hasOrders=document.body.innerText.indexOf(\"订单\")!==-1;
+  var hasProfile=document.body.innerText.indexOf(\"我\")!==-1;
+  var userEl=document.querySelector('.user-nick,.nick-name,[class*=\"user-nick\"],[class*=\"nick\"],.username,[class*=\"username\"]');
   var userName=userEl?userEl.innerText.trim():'';
-  return JSON.stringify({hasLoginIframe:hasLoginIframe,userName:userName});
+  return JSON.stringify({hasLoginIframe:hasLoginIframe,hasOrders:hasOrders,hasProfile:hasProfile,userName:userName});
 })()
 "
   do JavaScript js in front document
@@ -43,20 +45,22 @@ echo "   原始结果: $RESULT"
 echo ""
 echo "=== 检测结果 ==="
 
-# 提取 hasLoginIframe
-HAS_IFRAME=$(echo "$RESULT" | sed 's/.*"hasLoginIframe":\([^,]*\).*/\1/' | tr -d ' ')
-# 提取 userName
-USER_NAME=$(echo "$RESULT" | sed 's/.*"userName":"\([^"]*\)".*/\1/')
-
-if [ "$HAS_IFRAME" = "true" ]; then
+# 判断逻辑：hasLoginIframe=false 且 (hasOrders=true 或 hasProfile=true 或 userName有值)
+if echo "$RESULT" | grep -q '"hasLoginIframe":false'; then
+  if echo "$RESULT" | grep -q '"hasOrders":true'; then
+    echo "✅ 已登录 (检测到'订单'元素)"
+  elif echo "$RESULT" | grep -q '"hasProfile":true'; then
+    echo "✅ 已登录 (检测到'我'元素)"
+  elif echo "$RESULT" | grep -q '"userName":"[^"]*[^"]"'; then
+    USER_NAME=$(echo "$RESULT" | sed 's/.*"userName":"\([^"]*\)".*/\1/')
+    echo "✅ 已登录 (用户名: $USER_NAME)"
+  else
+    echo "⚠️ 状态未知 - hasLoginIframe=false 但无明确登录标志"
+    echo "   原始响应: $RESULT"
+  fi
+else
   echo "❌ 未登录 (检测到登录iframe)"
   echo "   请手动登录后重新运行检测"
-elif [ -n "$USER_NAME" ]; then
-  echo "✅ 已登录"
-  echo "   用户名: $USER_NAME"
-else
-  echo "⚠️ 状态未知"
-  echo "   原始响应: $RESULT"
 fi
 
 echo ""
