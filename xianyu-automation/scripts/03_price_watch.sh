@@ -117,10 +117,23 @@ tell application "Safari"
     tell window 1
         tell current tab
             do JavaScript "
-var r={url:window.location.href,price:''};
-var pn=document.querySelector('.number--NKh1vXWM');
-var pd=document.querySelector('.decimal--lSAcITCN');
-if(pn){r.price=pn.innerText+(pd?pd.innerText:'');}
+var r={url:window.location.href,price:'',deleted:false};
+
+// 检查是否商品已删除
+var bodyText = document.body.innerText;
+if(bodyText.match(/商品不存在|商品已下架|该商品已删除|商品已售罄|此商品不存在/)) {
+    r.deleted = true;
+} else {
+    // 尝试多种价格选择器
+    var priceEl = document.querySelector('.number--[a-zA-Z0-9]+');
+    if(!priceEl) priceEl = document.querySelector('[class*=\"number--\"]');
+    if(!priceEl) priceEl = document.querySelector('[class*=\"price-wrap--\"]');
+    if(!priceEl) priceEl = document.querySelector('[class*=\"price--\"]');
+    if(priceEl) {
+        var txt = priceEl.innerText.replace(/[^0-9.]/g,'');
+        if(txt) r.price = txt;
+    }
+}
 JSON.stringify(r);
 "
         end tell
@@ -136,7 +149,11 @@ db_path, tmpfile = sys.argv[1], sys.argv[2]
 try:
     with open(tmpfile) as f:
         data = json.load(f)
-    if not data.get("url") or not data.get("price"):
+    # 商品已删除，跳过
+    if data.get('deleted'):
+        print('deleted')
+        sys.exit(2)
+    if not data.get('url') or not data.get('price'):
         sys.exit(1)
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
@@ -151,7 +168,12 @@ except:
     sys.exit(1)
 PYEOF
 )
-        if [ $? -eq 0 ]; then
+        if [ $? -eq 2 ]; then
+            # 商品已删除
+            failed=$((failed + 1))
+            echo -ne "\r[$processed/$URL_COUNT] ⏭️ 商品已删除\n"
+            osascript -e 'tell application "Safari" to close current tab of window 1'
+        elif [ $? -eq 0 ]; then
             saved=$((saved + 1))
             echo -ne "\r[$processed/$URL_COUNT] ✅ $result\n"
             # 成功获取数据后关闭当前标签页
