@@ -24,7 +24,7 @@ mkdir -p "$DB_DIR"
 # 计算需要翻的页数 (每页30个商品)
 PAGES=$(( (COUNT + 29) / 30 ))
 [ $PAGES -lt 1 ] && PAGES=1
-[ $PAGES -gt 10 ] && PAGES=10  # 最多10页
+[ $PAGES -gt 10 ] && PAGES=10
 
 echo "   需要 $PAGES 页"
 
@@ -45,7 +45,7 @@ rm -f /tmp/search_page_*.json
 
 for ((page=1; page<=PAGES; page++)); do
     echo "   === 第 $page 页 ==="
-    
+
     # 提取当前页链接
     osascript > /tmp/search_page_${page}.json << 'EOF'
 set js to "JSON.stringify([].map.call(document.querySelectorAll('a[href*=\"/item?id=\"]'), function(a){return a.href}).slice(0,30))"
@@ -56,11 +56,11 @@ EOF
 
     count=$(python3 -c "import json; print(len(json.load(open('/tmp/search_page_${page}.json'))))" 2>/dev/null || echo 0)
     echo "   获取到 $count 个链接"
-    
+
     # 点击下一页（如果不是最后一页）
     if [ $page -lt $PAGES ]; then
         echo "   点击下一页..."
-        
+
         cat > /tmp/xpath_next.js << 'JSEOF'
 var btn = document.evaluate(
   "//*[@id='content']/div[2]/div[4]/div/div[1]/button[2]/div",
@@ -72,7 +72,7 @@ JSEOF
 tell application "Safari"
   do JavaScript js in front document
 end tell'
-        
+
         sleep 3
     fi
 done
@@ -116,12 +116,14 @@ fi
 # 步骤4: 访问商品获取详情 (只取前COUNT个)
 echo "4. 获取商品详情 (前 $COUNT 个)..."
 
-python3 << 'PYEOF'
+# 写入详情提取脚本
+cat > /tmp/fetch_details.py << 'PYEOF'
+#!/usr/bin/env python3
 import json
 import subprocess
 import time
 import re
-import os
+import random
 
 LOCATIONS = [
     '北京', '上海', '天津', '重庆',
@@ -133,61 +135,63 @@ LOCATIONS = [
     '大连', '沈阳', '青岛', '长沙', '郑州', '东莞', '佛山', '宁波'
 ]
 
+def run_osascript(script):
+    result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+    return result.stdout
+
+def get_page_html():
+    return run_osascript('tell application "Safari" to do JavaScript "document.body.innerHTML" in front document')
+
+def get_page_text():
+    return run_osascript('tell application "Safari" to do JavaScript "document.body.innerText" in front document')
+
+def scroll_page(px):
+    script = f'tell application "Safari" to do JavaScript "window.scrollBy(0,{px});"'
+    run_osascript(script)
+
 with open('/tmp/search_links.json') as f:
     links = json.load(f)
 
-# 只取前COUNT个
-count = int(os.environ.get('COUNT', '5'))
+count = int(open('/tmp/count.txt').read().strip())
 links = links[:count]
 
-print(f"   准备获取 {len(links)} 个商品详情...")
+print(f"准备获取 {len(links)} 个商品详情...")
 
 results = []
 for i, url in enumerate(links):
     try:
-        subprocess.run([
-            'osascript', '-e', 
-            f'tell application "Safari" to set URL of front document to "{url}"'
-        ], capture_output=True)
-        time.sleep(2)
-        
-        # 获取页面完整HTML用于提取seller和views
-        html_result = subprocess.run([
-            'osascript', '-e', 
-            'tell application "Safari" to do JavaScript "document.body.innerHTML" in front document'
-        ], capture_output=True, text=True)
-        
-        html = html_result.stdout
-        
-        # 获取纯文本用于提取其他信息
-        text_result = subprocess.run([
-            'osascript', '-e', 
-            'tell application "Safari" to do JavaScript "document.body.innerText" in front document'
-        ], capture_output=True, text=True)
-        
-        text = text_result.stdout
+        # 拟人化：随机停留1-3秒
+        stay_time = random.uniform(1, 3)
+        print(f"[{i+1}] 停留 {stay_time:.1f}s...")
+        time.sleep(stay_time)
+
+        # 打开商品页
+        run_osascript(f'tell application "Safari" to set URL of front document to "{url}"')
+
+        # 拟人化：随机滚动10-200px
+        scroll_px = random.randint(10, 200)
+        scroll_page(scroll_px)
+
+        # 再随机停留0.5-1.5秒
+        time.sleep(random.uniform(0.5, 1.5))
+
+        # 获取页面
+        html = get_page_html()
+        text = get_page_text()
         lines = [l.strip() for l in text.split('\n') if l.strip()]
-        
-        info = {
-            'url': url, 
-            'price': '', 
-            'title': '', 
-            'location': '', 
-            'seller': '',
-            'views': '',
-            'wants': '0'
-        }
-        
-        # 提取 seller: div[class*="item-user-info-nick--"]
+
+        info = {'url': url, 'price': '', 'title': '', 'location': '', 'seller': '', 'views': '', 'wants': '0'}
+
+        # 提取 seller
         seller_match = re.search(r'class="[^"]*item-user-info-nick--[^"]*"[^>]*>([^<]+)<', html)
         if seller_match:
             info['seller'] = seller_match.group(1).strip()
-        
-        # 提取 views: X浏览
+
+        # 提取 views
         views_match = re.search(r'(\d+)\s*浏览', text)
         if views_match:
             info['views'] = views_match.group(1)
-        
+
         # 解析价格
         for line in lines:
             if '¥' in line:
@@ -195,14 +199,14 @@ for i, url in enumerate(links):
                 if m and m.group(1):
                     info['price'] = m.group(1).replace('d', '.')
                     break
-        
+
         # 想要数
         for line in lines:
             m = re.search(r'(\d+)\s*人想要', line)
             if m:
                 info['wants'] = m.group(1)
                 break
-        
+
         # 位置
         for j, line in enumerate(lines):
             if re.search(r'\d+\s*(小时|天|分钟)前来过', line):
@@ -211,7 +215,7 @@ for i, url in enumerate(links):
                     if prev in LOCATIONS or (len(prev) <= 6 and re.match(r'^[\u4e00-\u9fa5]+$', prev)):
                         info['location'] = prev
                         break
-        
+
         if not info['location']:
             for j, line in enumerate(lines):
                 if '来过' in line and j > 0:
@@ -220,35 +224,33 @@ for i, url in enumerate(links):
                         if prev not in ['搜索', '网页版', '综合', '个人', '全新']:
                             info['location'] = prev
                             break
-        
+
         # 标题
         for line in lines:
             line = line.strip()
             if len(line) > 15 and not line.startswith('¥') and '想要' not in line and '浏览' not in line and '信用' not in line and '来过' not in line:
                 info['title'] = line[:80]
                 break
-        
+
         results.append(info)
-        price = info['price'] or '?'
-        wants = info['wants']
-        loc = info['location'] or '?'
-        seller = info['seller'] or '?'
-        views = info['views'] or '?'
-        print(f"   [{i+1}] ¥{price} | {loc} | {wants}想要 | {views}浏览 | {seller}")
-        
+        print(f"[{i+1}] ¥{info['price'] or '?'} | {info['location'] or '?'} | {info['wants']}想要 | {info['views']}浏览 | {info['seller'] or '?'}")
+
     except Exception as e:
-        print(f"   [{i+1}] 错误: {e}")
+        print(f"[{i+1}] 错误: {e}")
 
 with open('/tmp/search_details.json', 'w') as f:
     json.dump(results, f, ensure_ascii=False)
 
-print(f"   完成: {len(results)} 个商品")
+print(f"完成: {len(results)} 个商品")
 PYEOF
+
+echo "$COUNT" > /tmp/count.txt
+python3 /tmp/fetch_details.py
 
 # 步骤5: 存入数据库
 echo "5. 保存到数据库..."
 
-DB_FILE_ENV="$DB_FILE" COUNT="$COUNT" python3 << 'PYEOF'
+DB_FILE_ENV="$DB_FILE" python3 << 'PYEOF'
 import sqlite3
 import json
 import os
@@ -258,7 +260,6 @@ DB_FILE = os.environ.get('DB_FILE_ENV', '/tmp/xianyu_products.db')
 conn = sqlite3.connect(DB_FILE)
 c = conn.cursor()
 
-# 删除旧表并重建 (删除description列，新增seller和views)
 c.execute('''CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT UNIQUE,
@@ -274,20 +275,20 @@ c.execute('''CREATE TABLE IF NOT EXISTS products (
 try:
     with open('/tmp/search_details.json') as f:
         products = json.load(f)
-    
+
     saved = 0
     skipped = 0
     for p in products:
         try:
-            c.execute('''INSERT INTO products (url, title, price, location, seller, views, wants) 
+            c.execute('''INSERT INTO products (url, title, price, location, seller, views, wants)
                          VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                     (p.get('url',''), p.get('title',''), p.get('price',''), 
-                      p.get('location',''), p.get('seller',''), 
+                     (p.get('url',''), p.get('title',''), p.get('price',''),
+                      p.get('location',''), p.get('seller',''),
                       p.get('views',''), p.get('wants','0')))
             saved += 1
-        except Exception as e:
+        except:
             skipped += 1
-    
+
     conn.commit()
     print(f"   新增 {saved} 个商品 (跳过 {skipped} 个重复)")
 except Exception as e:
