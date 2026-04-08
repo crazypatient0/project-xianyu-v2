@@ -1,84 +1,205 @@
 #!/bin/bash
 # 商品搜索 - 获取多页商品并存入数据库
 # 用法: ./02_search.sh <关键词> [页数]
+# 默认获取3页（约90个商品）
 
 KEYWORD="${1:-iphone}"
-PAGES="${2:-2}"
+PAGES="${2:-3}"
 
 echo "=== 商品搜索: $KEYWORD (第1-$PAGES页) ==="
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DB_PATH="$SCRIPT_DIR/../data/xianyu_products.db"
+# 步骤1: 打开Safari
+echo "打开Safari..."
+osascript -e 'tell application "Safari" to activate'
 
-mkdir -p "$(dirname "$DB_PATH")"
-sqlite3 "$DB_PATH" "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT UNIQUE, title TEXT, price DECIMAL(10,2), location TEXT, seller TEXT, description TEXT, views TEXT, wants TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
-sqlite3 "$DB_PATH" "DELETE FROM products;"
+# 步骤2: 导航到搜索页
+echo "导航到搜索页..."
+osascript -e 'tell application "Safari" to tell window 1 to tell current tab to set URL to "https://www.goofish.com/search?q='"$KEYWORD"'"'
 
-# 打开搜索页
-echo "打开搜索页..."
-ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$KEYWORD'))")
-osascript -e "tell application \"Safari\" to open location \"https://www.goofish.com/search?q=$ENCODED\""
-sleep 4
+# 步骤3: 等待页面加载
+sleep 3
 
-# 创建提取脚本
-EXTRACT_SCRIPT="/tmp/xianyu_search_extract.scpt"
-cat > "$EXTRACT_SCRIPT" << 'EOF'
+# 步骤4: 获取每一页的商品链接和详情
+rm -rf /tmp/xianyu_search
+mkdir -p /tmp/xianyu_search
+
+for ((page=1; page<=PAGES; page++)); do
+    echo "=== 第 $page 页 ==="
+
+    # 获取快照（用于链接）
+    echo "获取页面快照..."
+    mcporter call safari.safari_snapshot --args '{"tabIndex":1}' > /tmp/xianyu_search/page_${page}.txt 2>&1
+
+    # 提取商品链接
+    grep -o 'href="https://www\.goofish\.com/item?id=[^"]*"' /tmp/xianyu_search/page_${page}.txt | sed 's/href="//;s/"//' | sort -u > /tmp/xianyu_search/links_${page}.txt
+    link_count=$(wc -l < /tmp/xianyu_search/links_${page}.txt)
+    echo "第${page}页: ${link_count} 个商品链接"
+
+    # 提取当前页商品详情
+    echo "提取商品详情..."
+    osascript << 'EOF' > /tmp/xianyu_search/products_${page}.json
 tell application "Safari"
     tell window 1
         tell current tab
-            set js to "var r={urls:[]};var ls=document.querySelectorAll('a[href*=item]');ls.forEach(function(l){if(l.href.match(/item\\?id=/)&&l.href.match(/goofish/)&&r.urls.indexOf(l.href)<0)r.urls.push(l.href);});JSON.stringify(r);"
-            do JavaScript js
+            do JavaScript "
+var items = [];
+var cards = document.querySelectorAll('a[href*=\"/item?id=\"]');
+for(var i=0; i<cards.length && i<30; i++){
+    var card = cards[i];
+    var priceNum = card.querySelector('.number--NKh1vXWM');
+    var priceDec = card.querySelector('.decimal--lSAcITCN');
+    var price = priceNum ? (priceNum.innerText + (priceDec ? priceDec.innerText : '')) : '';
+    var titleEl = card.querySelector('.main-title--sMrtWSJa');
+    var title = titleEl ? titleEl.innerText.replace(/\\n/g,' ').substring(0,200) : '';
+    var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null, false);
+    var texts = [];
+    while(walker.nextNode()) {
+        var t = walker.currentNode.nodeValue.trim();
+        if(t && t.length > 0 && t.length < 30) texts.push(t);
+    }
+    var loc = '';
+    var wants = '';
+    for(var j=0; j<texts.length; j++) {
+        if(texts[j].match(/人想要/)) {
+            wants = texts[j].match(/(\\d+)/) ? texts[j].match(/(\\d+)/)[1] : '';
+        }
+        if(texts[j].match(/^.{2,4}$/) && !texts[j].match(/想要/) && !texts[j].match(/信用/) && !texts[j].match(/好评/) && !texts[j].match(/全新/) && !texts[j].match(/\\d+/)) {
+            loc = texts[j];
+        }
+    }
+    items.push({title: title, price: price, loc: loc, wants: wants, url: card.href});
+}
+JSON.stringify(items);
+"
         end tell
     end tell
 end tell
 EOF
+    # 用python计数而不是wc -l
+    product_count=$(python3 -c "import json,sys; f=open('/tmp/xianyu_search/products_${page}.json'); d=json.load(f); print(len(d))" 2>/dev/null || echo 0)
+    echo "第${page}页: ${product_count} 条详情"
 
-mkdir -p /tmp/xianyu_search
-rm -f /tmp/xianyu_search/urls_*.txt
-
-# 遍历页面
-total=0
-for ((page=1; page<=PAGES; page++)); do
-    echo "=== 第 $page 页 ==="
-    
-    # 提取URL
-    osascript "$EXTRACT_SCRIPT" > /tmp/xianyu_search/page_${page}.json 2>/dev/null
-    
-    count=$(python3 -c "import json; d=json.load(open('/tmp/xianyu_search/page_${page}.json')); print(len(d.get('urls',[])))" 2>/dev/null || echo 0)
-    echo "提取到 $count 个URL"
-    
-    # 保存URL到文件
-    python3 -c "import json; d=json.load(open('/tmp/xianyu_search/page_${page}.json')); [print(u) for u in d.get('urls',[])]" > /tmp/xianyu_search/urls_${page}.txt 2>/dev/null
-    
-    total=$((total + count))
-    
-    # 翻页
+    # 点击下一页（如果不是最后一页）
     if [ $page -lt $PAGES ]; then
-        echo "翻页..."
-        osascript -e 'tell application "Safari" to tell window 1 to tell current tab to do JavaScript "window.scrollTo(0, document.body.scrollHeight)"'
-        sleep 2
-        osascript -e 'tell application "Safari" to tell window 1 to tell current tab to do JavaScript "var b=document.querySelectorAll(\"button[class*=arrow]\"); if(b[b.length-1]) b[b.length-1].click();"'
+        echo "点击下一页..."
+        osascript -e 'tell application "Safari" to tell window 1 to tell current tab to do JavaScript "var btns = document.querySelectorAll(\"button[class*=\\\"pagination-arrow\\\"]\"); if(btns[1]){ btns[1].click(); }"' 2>/dev/null
         sleep 3
     fi
 done
 
-# 合并去重
-cat /tmp/xianyu_search/urls_*.txt | sort -u > /tmp/xianyu_search/all_urls.txt
-unique=$(wc -l < /tmp/xianyu_search/all_urls.txt)
+# 步骤5: 合并所有链接
+cat /tmp/xianyu_search/links_*.txt | sort -u > /tmp/xianyu_search/all_links.txt
+total=$(wc -l < /tmp/xianyu_search/all_links.txt)
 echo ""
-echo "=== 去重后共 $unique 个商品 ==="
+echo "=== 总计: $total 个商品 ==="
 
-# 写入数据库
+# 步骤6: 合并所有详情并存入数据库
 echo "保存到数据库..."
-saved=0
-while IFS= read -r url; do
-    [ -z "$url" ] && continue
-    sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO products (url) VALUES ('$url');" 2>/dev/null && saved=$((saved+1))
-    echo -ne "\r已保存: $saved / $unique"
-done < /tmp/xianyu_search/all_urls.txt
+DB_PATH="/Users/lucifer/.openclaw/workspace-xiaoyu/project-xianyu/xianyu-automation/data/xianyu_products.db"
+rm -f "$DB_PATH"
+
+python3 << 'PYEOF'
+import sqlite3
+import os
+import json
+
+DB_PATH = "/Users/lucifer/.openclaw/workspace-xiaoyu/project-xianyu/xianyu-automation/data/xianyu_products.db"
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+conn = sqlite3.connect(DB_PATH)
+c = conn.cursor()
+c.execute('''CREATE TABLE products (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE,
+    title TEXT,
+    price TEXT,
+    location TEXT,
+    seller TEXT,
+    description TEXT,
+    views TEXT,
+    wants TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+''')
+
+# 收集所有URL
+all_urls = set()
+with open("/tmp/xianyu_search/all_links.txt") as f:
+    for line in f:
+        url = line.strip()
+        if url:
+            all_urls.add(url)
+
+# 收集所有页面的商品数据
+url_to_data = {}
+for page in range(1, 10):
+    fname = f"/tmp/xianyu_search/products_{page}.json"
+    if not os.path.exists(fname):
+        break
+    with open(fname) as f:
+        content = f.read().strip()
+        if content:
+            try:
+                products = json.loads(content)
+                for p in products:
+                    if p.get("url"):
+                        url_to_data[p["url"]] = p
+            except:
+                pass
+
+print(f"已提取 {len(url_to_data)} 个商品详情")
+
+# 构建最终商品列表
+final_products = []
+for url in sorted(all_urls):
+    if url in url_to_data:
+        p = url_to_data[url]
+        final_products.append({
+            "url": url,
+            "title": p.get("title", ""),
+            "price": p.get("price", ""),
+            "location": p.get("loc", ""),
+            "wants": p.get("wants", "")
+        })
+    else:
+        final_products.append({"url": url, "title": "", "price": "", "location": "", "wants": ""})
+
+# 保存到数据库
+saved = 0
+for p in final_products:
+    c.execute('INSERT OR IGNORE INTO products (url, title, price, location, wants) VALUES (?, ?, ?, ?, ?)',
+             (p["url"], p["title"], p["price"], p["location"], p["wants"]))
+    saved += 1
+
+conn.commit()
+
+# 统计
+c.execute("SELECT COUNT(*) FROM products")
+total = c.fetchone()[0]
+c.execute("SELECT COUNT(*) FROM products WHERE price != ''")
+with_price = c.fetchone()[0]
+c.execute("SELECT COUNT(*) FROM products WHERE location != ''")
+with_loc = c.fetchone()[0]
+c.execute("SELECT COUNT(*) FROM products WHERE wants != ''")
+with_wants = c.fetchone()[0]
+
+print(f"总计: {total} 个商品")
+print(f"  - 有价格: {with_price}")
+print(f"  - 有位置: {with_loc}")
+print(f"  - 有想要数: {with_wants}")
+
+# 示例
+if total > 0:
+    print("\n=== 商品示例 ===")
+    c.execute("SELECT price, location, wants, title FROM products LIMIT 5")
+    for row in c.fetchall():
+        price = row[0] if row[0] else "?"
+        loc = row[1] if row[1] else "?"
+        wants = row[2] if row[2] else "0"
+        title = (row[3] or "无标题")[:50]
+        print(f"  ¥{price} | {loc} | {wants}人想要 | {title}...")
+
+conn.close()
+PYEOF
 
 echo ""
 echo "=== 完成 ==="
-
-# 显示结果
-sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM products;"
