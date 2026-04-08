@@ -84,11 +84,26 @@ if [ $? -ne 0 ] || [ -z "$URL_COUNT" ]; then
 fi
 echo "共 $URL_COUNT 个去重商品"
 
-# ========== 步骤5: 逐个访问商品（新标签页方式） ==========
+# ========== 步骤5: 创建AppleScript脚本模板 ==========
+# 使用脚本文件避免osascript -e的引号嵌套问题
+EXTRACT_SCRIPT="/tmp/price_watch/extract_price.scpt"
+cat > "$EXTRACT_SCRIPT" << 'APPLESCRIPT'
+tell application "Safari"
+    tell window 1
+        tell current tab
+            set js to "var r={url:window.location.href,price:'',deleted:false};var bodyText=document.body.innerText;if(bodyText.match(/商品不存在/)||bodyText.match(/商品已下架/)||bodyText.match(/该商品已删除/)||bodyText.match(/商品已售罄/)){r.deleted=true;}else{var pe=document.querySelector('[class*=price--]');if(!pe)pe=document.querySelector('[class*=number--]');if(!pe)pe=document.querySelector('[class*=price-wrap--]');if(pe){var t=pe.innerText.replace(/[^0-9.]/g,'');if(t)r.price=t;}}JSON.stringify(r);"
+            do JavaScript js
+        end tell
+    end tell
+end tell
+APPLESCRIPT
+
+# ========== 步骤6: 逐个访问商品（新标签页方式） ==========
 mkdir -p /tmp/price_watch
 processed=0
 failed=0
 saved=0
+deleted=0
 
 while IFS= read -r url; do
     [ -z "$url" ] && continue
@@ -99,9 +114,6 @@ while IFS= read -r url; do
     osascript -e "tell application \"Safari\" to tell window 1 to make new tab with properties {URL:\"$url\"}"
     sleep 3
 
-    # 验证页面是否正确加载（检查当前URL）
-    current_url=$(osascript -e 'tell application "Safari" to tell window 1 to return URL of current tab')
-    
     # 拟人化操作: 随机滚动50-300像素
     scroll_px=$((RANDOM % 251 + 50))
     osascript -e "tell application \"Safari\" to tell window 1 to tell current tab to do JavaScript \"window.scrollBy(0, $scroll_px)\""
@@ -110,94 +122,66 @@ while IFS= read -r url; do
     echo " 滚动${scroll_px}px, 停留${stay_time}秒..."
     sleep $stay_time
 
-    # 提取数据
+    # 提取数据 - 使用脚本文件
     tmpfile="/tmp/price_watch/p_$$.json"
-    osascript << 'OUTEREOF' > "$tmpfile"
-tell application "Safari"
-    tell window 1
-        tell current tab
-            do JavaScript "
-var r={url:window.location.href,price:'',deleted:false};
-
-// 检查是否商品已删除
-var bodyText = document.body.innerText;
-if(bodyText.match(/商品不存在|商品已下架|该商品已删除|商品已售罄|此商品不存在/)) {
-    r.deleted = true;
-} else {
-    // 尝试多种价格选择器
-    var priceEl = document.querySelector('.number--[a-zA-Z0-9]+');
-    if(!priceEl) priceEl = document.querySelector('[class*=\"number--\"]');
-    if(!priceEl) priceEl = document.querySelector('[class*=\"price-wrap--\"]');
-    if(!priceEl) priceEl = document.querySelector('[class*=\"price--\"]');
-    if(priceEl) {
-        var txt = priceEl.innerText.replace(/[^0-9.]/g,'');
-        if(txt) r.price = txt;
-    }
-}
-JSON.stringify(r);
-"
-        end tell
-    end tell
-end tell
-OUTEREOF
+    osascript "$EXTRACT_SCRIPT" > "$tmpfile"
 
     if [ -f "$tmpfile" ] && [ -s "$tmpfile" ]; then
-        result=$(python3 - "$DB_PATH" "$tmpfile" << 'PYEOF'
+        # 解析结果
+        parse_result=$(python3 - "$DB_PATH" "$tmpfile" << 'PYEOF'
 import sqlite3, sys, json
 from datetime import datetime
 db_path, tmpfile = sys.argv[1], sys.argv[2]
 try:
     with open(tmpfile) as f:
         data = json.load(f)
-    # 商品已删除，跳过
     if data.get('deleted'):
-        print('deleted')
+        print('DELETED')
         sys.exit(2)
     if not data.get('url') or not data.get('price'):
+        print('EMPTY')
         sys.exit(1)
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
-    price = float(data["price"])
-    dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO price_history (url, price, check_time) VALUES (?, ?, ?)",
-        (data["url"], price, dt))
+    price = float(data['price'])
+    dt = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    c.execute('INSERT INTO price_history (url, price, check_time) VALUES (?, ?, ?)',
+        (data['url'], price, dt))
     conn.commit()
     conn.close()
-    print(f"¥{price}")
-except:
+    print(f"PRICE:{price}")
+except Exception as e:
+    print(f'ERROR:{e}')
     sys.exit(1)
 PYEOF
 )
-        if [ $? -eq 2 ]; then
-            # 商品已删除
-            failed=$((failed + 1))
+        exit_code=$?
+        
+        if [ $exit_code -eq 2 ]; then
+            deleted=$((deleted + 1))
             echo -ne "\r[$processed/$URL_COUNT] ⏭️ 商品已删除\n"
-            osascript -e 'tell application "Safari" to close current tab of window 1'
-        elif [ $? -eq 0 ]; then
+        elif [ $exit_code -eq 0 ]; then
             saved=$((saved + 1))
-            echo -ne "\r[$processed/$URL_COUNT] ✅ $result\n"
-            # 成功获取数据后关闭当前标签页
-            osascript -e 'tell application "Safari" to close current tab of window 1'
+            echo -ne "\r[$processed/$URL_COUNT] ✅ $parse_result\n"
         else
             failed=$((failed + 1))
-            echo -ne "\r[$processed/$URL_COUNT] ❌ 解析失败\n"
-            # 解析失败也关闭标签页
-            osascript -e 'tell application "Safari" to close current tab of window 1'
+            echo -ne "\r[$processed/$URL_COUNT] ❌ 解析失败 ($parse_result)\n"
         fi
     else
         failed=$((failed + 1))
         echo -ne "\r[$processed/$URL_COUNT] ❌ 无输出\n"
-        # 无输出也关闭标签页
-        osascript -e 'tell application "Safari" to close current tab of window 1'
     fi
+    
+    # 关闭标签页
+    osascript -e 'tell application "Safari" to close current tab of window 1' 2>/dev/null
     rm -f "$tmpfile"
 
 done < /tmp/price_watch_urls.txt
 
 echo ""
-echo "=== 完成: 成功 $saved, 失败 $failed ==="
+echo "=== 完成: 成功 $saved, 删除 $deleted, 失败 $failed ==="
 
-# ========== 步骤6: 显示最新记录 ==========
+# ========== 步骤7: 显示最新记录 ==========
 python3 - "$DB_PATH" << 'PYEOF'
 import sqlite3, sys
 db_path = sys.argv[1]
