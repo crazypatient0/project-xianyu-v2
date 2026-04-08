@@ -23,21 +23,79 @@ echo "2. 导航到搜索页..."
 osascript -e 'tell application "Safari" to set URL of front document to "https://www.goofish.com/search?q='"$KEYWORD"'"'
 sleep 3
 
-# 步骤3: 提取商品链接
-echo "3. 提取商品链接..."
+# 步骤3: 提取所有页的商品链接
+echo "3. 提取各页商品链接..."
 
-osascript << 'EOF' > /tmp/search_links.json
+rm -f /tmp/search_links.json /tmp/search_page_*.json
+ALL_LINKS=()
+
+for ((page=1; page<=PAGES; page++)); do
+    echo "   === 第 $page 页 ==="
+    
+    # 提取当前页链接
+    osascript > /tmp/search_page_${page}.json << 'EOF'
 set js to "JSON.stringify([].map.call(document.querySelectorAll('a[href*=\"/item?id=\"]'), function(a){return a.href}).slice(0,30))"
 tell application "Safari"
   do JavaScript js in front document
 end tell
 EOF
 
-link_count=$(python3 -c "import json; print(len(json.load(open('/tmp/search_links_json'))))" 2>/dev/null || echo 0)
-if [ "$link_count" -eq 0 ]; then
-    link_count=$(python3 -c "import json; print(len(json.load(open('/tmp/search_links.json'))))" 2>/dev/null || echo 0)
-fi
-echo "   获取到 $link_count 个商品链接"
+    count=$(python3 -c "import json; print(len(json.load(open('/tmp/search_page_${page}.json'))))" 2>/dev/null || echo 0)
+    echo "   获取到 $count 个链接"
+    
+    # 点击下一页（如果是最后一页则跳过）
+    if [ $page -lt $PAGES ]; then
+        echo "   点击下一页..."
+        
+        # 使用XPath点击下一页按钮
+        # XPath: //*[@id="content"]/div[2]/div[4]/div/div[1]/button[2]/div
+        # 注意: 必须用文件方式执行JS，直接 -e 内联会有转义问题
+        cat > /tmp/xpath_next.js << 'JSEOF'
+var btn = document.evaluate(
+  "//*[@id='content']/div[2]/div[4]/div/div[1]/button[2]/div",
+  document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+).singleNodeValue;
+if(btn){ btn.click(); "clicked"; } else { "not_found"; }
+JSEOF
+        osascript -e 'set js to do shell script "cat /tmp/xpath_next.js"
+tell application "Safari"
+  do JavaScript js in front document
+end tell'
+        
+        sleep 3
+    fi
+done
+
+# 合并所有页链接并去重
+echo "   合并并去重链接..."
+python3 << 'PYEOF'
+import json
+import os
+
+all_links = []
+seen = set()
+for i in range(1, 100):
+    fname = f"/tmp/search_page_{i}.json"
+    if not os.path.exists(fname):
+        break
+    try:
+        links = json.load(open(fname))
+        for link in links:
+            url = link.split('&')[0]  # 去除多余参数
+            if url not in seen:
+                seen.add(url)
+                all_links.append(url)
+    except:
+        pass
+
+with open('/tmp/search_links.json', 'w') as f:
+    json.dump(all_links, f)
+
+print(f"合并后共 {len(all_links)} 个唯一链接")
+PYEOF
+
+link_count=$(python3 -c "import json; print(len(json.load(open('/tmp/search_links.json'))))")
+echo "   总计: $link_count 个商品链接"
 
 if [ "$link_count" -eq 0 ]; then
   echo "   错误: 无法获取商品链接"
@@ -53,7 +111,6 @@ import subprocess
 import time
 import re
 
-# 省份/城市列表用于匹配位置
 LOCATIONS = [
     '北京', '上海', '天津', '重庆',
     '广东', '浙江', '江苏', '四川', '山东', '河南', '湖北', '湖南',
@@ -72,16 +129,12 @@ print(f"   准备获取 {len(links)} 个商品详情...")
 results = []
 for i, url in enumerate(links):
     try:
-        url = url.split('&')[0]
-        
-        # 打开商品页
         subprocess.run([
             'osascript', '-e', 
             f'tell application "Safari" to set URL of front document to "{url}"'
         ], capture_output=True)
         time.sleep(2)
         
-        # 获取页面文本
         result = subprocess.run([
             'osascript', '-e', 
             'tell application "Safari" to do JavaScript "document.body.innerText" in front document'
@@ -90,15 +143,9 @@ for i, url in enumerate(links):
         text = result.stdout
         lines = [l.strip() for l in text.split('\n') if l.strip()]
         
-        info = {
-            'url': url, 
-            'price': '', 
-            'title': '', 
-            'location': '', 
-            'wants': '0'
-        }
+        info = {'url': url, 'price': '', 'title': '', 'location': '', 'wants': '0'}
         
-        # 解析价格: ¥后面的数字
+        # 解析价格
         for line in lines:
             if '¥' in line:
                 m = re.search(r'¥\s*(\d+[\.d]*)?', line)
@@ -113,19 +160,15 @@ for i, url in enumerate(links):
                 info['wants'] = m.group(1)
                 break
         
-        # 位置: 查找 "城市/省份\n小时前来过" 的模式
+        # 位置
         for j, line in enumerate(lines):
-            # 检查是否是"X小时前来过"、"X天前来过"等
             if re.search(r'\d+\s*(小时|天|分钟)前来过', line):
-                # 前一行可能是位置
                 if j > 0:
                     prev = lines[j-1]
-                    # 如果前一行是已知的城市/省份名
-                    if prev in LOCATIONS or len(prev) <= 6 and re.match(r'^[\u4e00-\u9fa5]+$', prev):
+                    if prev in LOCATIONS or (len(prev) <= 6 and re.match(r'^[\u4e00-\u9fa5]+$', prev)):
                         info['location'] = prev
                         break
         
-        # 如果没找到，尝试其他模式
         if not info['location']:
             for j, line in enumerate(lines):
                 if '来过' in line and j > 0:
@@ -135,7 +178,7 @@ for i, url in enumerate(links):
                             info['location'] = prev
                             break
         
-        # 标题: 商品描述的第一行
+        # 标题
         for line in lines:
             line = line.strip()
             if len(line) > 15 and not line.startswith('¥') and '想要' not in line and '浏览' not in line and '信用' not in line and '来过' not in line:
@@ -151,7 +194,6 @@ for i, url in enumerate(links):
     except Exception as e:
         print(f"   [{i+1}] 错误: {e}")
 
-# 保存结果
 with open('/tmp/search_details.json', 'w') as f:
     json.dump(results, f, ensure_ascii=False)
 
@@ -196,7 +238,7 @@ try:
                      (p.get('url',''), p.get('title',''), p.get('price',''), 
                       p.get('location',''), p.get('wants','0')))
             saved += 1
-        except Exception as e:
+        except:
             skipped += 1
     
     conn.commit()
