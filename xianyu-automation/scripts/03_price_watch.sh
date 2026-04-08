@@ -45,7 +45,7 @@ if not c.fetchone():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         url TEXT,
         price REAL,
-        datetime TEXT)''')
+        check_time TEXT)''')
     conn.commit()
 conn.close()
 print("price_history 表就绪 ✅")
@@ -139,7 +139,7 @@ try:
     c = conn.cursor()
     price = float(data["price"])
     dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("INSERT INTO price_history (url, price, datetime) VALUES (?, ?, ?)",
+    c.execute("INSERT INTO price_history (url, price, check_time) VALUES (?, ?, ?)",
         (data["url"], price, dt))
     conn.commit()
     conn.close()
@@ -172,7 +172,7 @@ import sqlite3, sys
 db_path = sys.argv[1]
 conn = sqlite3.connect(db_path)
 c = conn.cursor()
-c.execute("SELECT price, url, datetime FROM price_history ORDER BY id DESC LIMIT 10")
+c.execute("SELECT price, url, check_time FROM price_history ORDER BY id DESC LIMIT 10")
 print("\n=== 最新价格记录 ===")
 print(f"{'价格':>8} | {'URL片段':<30} | {'时间'}")
 print("-" * 70)
