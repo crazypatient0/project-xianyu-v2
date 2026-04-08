@@ -568,7 +568,7 @@
     </routine>
     <schema id="214" parent="1" name="main">
       <Current>1</Current>
-      <LastIntrospectionLocalTimestamp>2026-04-07.07:30:59</LastIntrospectionLocalTimestamp>
+      <LastIntrospectionLocalTimestamp>2026-04-08.07:12:48</LastIntrospectionLocalTimestamp>
     </schema>
     <argument id="215" parent="14">
       <ArgumentDirection>R</ArgumentDirection>
@@ -1806,92 +1806,105 @@
     <argument id="626" parent="213">
       <Position>1</Position>
     </argument>
-    <table id="627" parent="214" name="products"/>
-    <table id="628" parent="214" name="sqlite_master">
+    <table id="627" parent="214" name="price_history"/>
+    <table id="628" parent="214" name="products"/>
+    <table id="629" parent="214" name="sqlite_master">
       <System>1</System>
     </table>
-    <table id="629" parent="214" name="sqlite_sequence">
+    <table id="630" parent="214" name="sqlite_sequence">
       <System>1</System>
     </table>
-    <column id="630" parent="627" name="id">
+    <column id="631" parent="627" name="id">
       <AutoIncrement>1</AutoIncrement>
       <Position>1</Position>
       <StoredType>INTEGER|0s</StoredType>
     </column>
-    <column id="631" parent="627" name="url">
+    <column id="632" parent="627" name="url">
       <Position>2</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="632" parent="627" name="title">
-      <Position>3</Position>
-      <StoredType>TEXT|0s</StoredType>
-    </column>
     <column id="633" parent="627" name="price">
+      <Position>3</Position>
+      <StoredType>REAL|0s</StoredType>
+    </column>
+    <column id="634" parent="627" name="check_time">
       <Position>4</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="634" parent="627" name="location">
+    <key id="635" parent="627">
+      <ColNames>id</ColNames>
+      <Primary>1</Primary>
+    </key>
+    <column id="636" parent="628" name="id">
+      <AutoIncrement>1</AutoIncrement>
+      <Position>1</Position>
+      <StoredType>INTEGER|0s</StoredType>
+    </column>
+    <column id="637" parent="628" name="url">
+      <Position>2</Position>
+      <StoredType>TEXT|0s</StoredType>
+    </column>
+    <column id="638" parent="628" name="title">
+      <Position>3</Position>
+      <StoredType>TEXT|0s</StoredType>
+    </column>
+    <column id="639" parent="628" name="price">
+      <Position>4</Position>
+      <StoredType>DECIMAL(10,2)|0s</StoredType>
+    </column>
+    <column id="640" parent="628" name="location">
       <Position>5</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="635" parent="627" name="seller">
+    <column id="641" parent="628" name="seller">
       <Position>6</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="636" parent="627" name="description">
+    <column id="642" parent="628" name="description">
       <Position>7</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="637" parent="627" name="views">
+    <column id="643" parent="628" name="views">
       <Position>8</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="638" parent="627" name="wants">
+    <column id="644" parent="628" name="wants">
       <Position>9</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
-    <column id="639" parent="627" name="created_at">
+    <column id="645" parent="628" name="created_at">
       <DefaultExpression>CURRENT_TIMESTAMP</DefaultExpression>
       <Position>10</Position>
       <StoredType>TIMESTAMP|0s</StoredType>
     </column>
-    <index id="640" parent="627" name="sqlite_autoindex_products_1">
-      <ColNames>url</ColNames>
-      <NameSurrogate>1</NameSurrogate>
-      <Unique>1</Unique>
-    </index>
-    <key id="641" parent="627">
+    <key id="646" parent="628">
       <ColNames>id</ColNames>
       <Primary>1</Primary>
     </key>
-    <key id="642" parent="627">
-      <ColNames>url</ColNames>
-      <UnderlyingIndexName>sqlite_autoindex_products_1</UnderlyingIndexName>
-    </key>
-    <column id="643" parent="628" name="type">
+    <column id="647" parent="629" name="type">
       <Position>1</Position>
-      <StoredType>TEXT|0s</StoredType>
-    </column>
-    <column id="644" parent="628" name="name">
-      <Position>2</Position>
-      <StoredType>TEXT|0s</StoredType>
-    </column>
-    <column id="645" parent="628" name="tbl_name">
-      <Position>3</Position>
-      <StoredType>TEXT|0s</StoredType>
-    </column>
-    <column id="646" parent="628" name="rootpage">
-      <Position>4</Position>
-      <StoredType>INT|0s</StoredType>
-    </column>
-    <column id="647" parent="628" name="sql">
-      <Position>5</Position>
       <StoredType>TEXT|0s</StoredType>
     </column>
     <column id="648" parent="629" name="name">
+      <Position>2</Position>
+      <StoredType>TEXT|0s</StoredType>
+    </column>
+    <column id="649" parent="629" name="tbl_name">
+      <Position>3</Position>
+      <StoredType>TEXT|0s</StoredType>
+    </column>
+    <column id="650" parent="629" name="rootpage">
+      <Position>4</Position>
+      <StoredType>INT|0s</StoredType>
+    </column>
+    <column id="651" parent="629" name="sql">
+      <Position>5</Position>
+      <StoredType>TEXT|0s</StoredType>
+    </column>
+    <column id="652" parent="630" name="name">
       <Position>1</Position>
     </column>
-    <column id="649" parent="629" name="seq">
+    <column id="653" parent="630" name="seq">
       <Position>2</Position>
     </column>
   </database-model>
